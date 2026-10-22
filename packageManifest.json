@@ -2,10 +2,10 @@
   "packageName": "HVAC Setpoint Override",
   "minimumHEVersion": "2.3.0",
   "author": "Justin Roff-Marsh",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "dateReleased": "2026-10-21",
   "licenseFile": "LICENSE",
-  "releaseNotes": "Apply now sends an integer setpoint to the thermostat's current mode, so the displayed setpoint updates.",
+  "releaseNotes": "Setpoints are entered in the app. Heat or cool is read from each thermostat. No hub variables.",
   "apps": [
     {
       "id": "hvac-setpoint-override",
