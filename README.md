@@ -20,7 +20,10 @@ Once the repo is public, HPM can use:
 ## Settings
 
 - Downstairs thermostat (required) and upstairs thermostat (optional).
-- Hub variable names. Defaults match the existing webCoRE globals: `DownstairsHVACMode`, `UpstairsHVACMode`, `HeatPoint`, `HeatPointCat`, `CoolPoint`, `CoolPointAway` is `CoolPointCat`.
+- Hub variable names. Defaults match the existing webCoRE globals:
+  - `DownstairsHVACMode`, `UpstairsHVACMode`
+  - `HeatPoint`, `HeatPointCat`
+  - `CoolPoint`, `CoolPointCat`
 - Mode variable values should be `Heat` or `Cool`.
 - Away setpoints are used when the location mode name contains "away" (for example `Away: Day` and `Away: Night`).
 - Check interval and hold length.
