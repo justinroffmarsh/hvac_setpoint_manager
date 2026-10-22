@@ -1,51 +1,43 @@
 # HVAC Setpoint Override
 
-A Hubitat app that applies heating/cooling setpoints based on hub mode and custom hub variables, while allowing a temporary manual override (default 4 hours) that is automatically cleared on thermostat mode changes.
+Hubitat app that replaces the downstairs/upstairs webCoRE setpoint piston.
 
-## Features
+It writes the heating or cooling setpoint from Hub Variables, based on the HVAC mode variable and whether the hub location mode contains "away". A manual change on the thermostat is left alone for a configurable hold (default 4 hours), then written back. Changing the thermostat's own mode ends the hold immediately.
 
-- Supports one or two thermostats (Downstairs / Upstairs)
-- Reads HVAC mode and setpoints from Hub Variables
-- Detects manual setpoint changes and holds them for a configurable duration
-- Clears the hold immediately when the thermostat’s own mode changes
-- Configurable check interval (5–30 minutes)
-- Debug logging toggle
+## Install
 
-## Installation
+This repository is private. Hubitat's Import button and Hubitat Package Manager can only fetch a **public** raw URL. Either make the repo public, or paste the Groovy in by hand:
 
-### Via Hubitat Package Manager (recommended)
+1. Settings, then enable **Show advanced/developer options**.
+2. **Apps Code**, then **+ New App**.
+3. Paste the contents of [apps/hvac-setpoint-override.groovy](apps/hvac-setpoint-override.groovy) and Save.
+4. **Apps**, then **+ Add User App**, and select **HVAC Setpoint Override**.
 
-1. Install [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) if you don’t already have it.
-2. Open HPM → Add a Repository → paste the raw URL of this repo’s `packageManifest.json`.
-3. Search for “HVAC Setpoint Override” and install.
+Once the repo is public, HPM can use:
 
-### Manual
+`https://raw.githubusercontent.com/justinroffmarsh/hvac_setpoint_manager/main/packageManifest.json`
 
-1. On your hub, enable **Settings → Show advanced/developer options**.
-2. Go to **Apps Code → + New App**.
-3. Click the three-dot menu → **Import**, paste the raw URL of `apps/hvac-setpoint-override.groovy`, then Save.
-4. Go to **Apps → + Add User App** and select the app.
+## Settings
 
-## Configuration
+- Downstairs thermostat (required) and upstairs thermostat (optional).
+- Hub variable names. Defaults match the existing webCoRE globals: `DownstairsHVACMode`, `UpstairsHVACMode`, `HeatPoint`, `HeatPointCat`, `CoolPoint`, `CoolPointAway` is `CoolPointCat`.
+- Mode variable values should be `Heat` or `Cool`.
+- Away setpoints are used when the location mode name contains "away" (for example `Away: Day` and `Away: Night`).
+- Check interval and hold length.
 
-1. Select your downstairs (and optionally upstairs) thermostat.
-2. Confirm the Hub Variable names match the ones you already use for mode and setpoints.
-3. Choose check interval and override duration.
-4. Enable debug logging while testing.
+## Behavior
 
-## How the override works
-
-- Every check cycle the app calculates the expected setpoint from the current HVAC mode variable and whether the hub is in an Away mode.
-- If the thermostat’s current setpoint differs and no override is active, it starts a new override timer.
-- While the timer is running the app leaves the thermostat alone.
-- When the timer expires the next cycle writes the calculated setpoint again.
-- A change to the thermostat’s `thermostatMode` attribute immediately expires the override.
+- On the first run, if the thermostat is already off the calculated setpoint, that difference is treated as a hold so the app does not overwrite it immediately.
+- A later manual change starts one hold. Later checks do not extend it.
+- When the hold ends, the calculated setpoint is written.
+- A change to `thermostatMode` clears the hold and the new mode's setpoint is applied.
+- A location-mode change (home versus away) updates the setpoint on the next check, but does not cancel an active hold.
 
 ## Requirements
 
-- Hubitat Elevation 2.3+
-- Hub Variables containing the mode strings and numeric setpoints
-- Thermostats that expose `thermostatMode`, `thermostatSetpoint`, `setHeatingSetpoint`, and `setCoolingSetpoint`
+- Hubitat Elevation 2.3 or newer
+- Hub Variables for mode and setpoints
+- Thermostats with `thermostatMode`, `thermostatSetpoint`, `setHeatingSetpoint`, and `setCoolingSetpoint`
 
 ## License
 
