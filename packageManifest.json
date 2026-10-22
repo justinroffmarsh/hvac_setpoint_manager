@@ -2,10 +2,10 @@
   "packageName": "HVAC Setpoint Override",
   "minimumHEVersion": "2.3.0",
   "author": "Justin Roff-Marsh",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "dateReleased": "2026-10-21",
   "licenseFile": "LICENSE",
-  "releaseNotes": "Mode-based setpoints with a manual hold. A thermostat mode change ends the hold. The hold is not extended on later checks.",
+  "releaseNotes": "A location mode change now clears any manual hold, same as a thermostat mode change.",
   "apps": [
     {
       "id": "hvac-setpoint-override",
