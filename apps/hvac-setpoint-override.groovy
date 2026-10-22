@@ -100,7 +100,7 @@ def checkAndSetSetpoints() {
     }
 }
 
-private void clearHold(device) {
+def clearHold(device) {
     if (!device) return
     state["overrideUntil_${device.id}"] = 0L
     state["lastCommanded_${device.id}"] = null
@@ -111,11 +111,11 @@ def processThermostat(thermostat, String modeVarName) {
 
     def modeRaw = readVar(modeVarName)
     def currentMode = modeRaw?.toString()?.trim()?.toLowerCase()
-    def isHeat = currentMode == "heat"
+    def varIsHeat = currentMode == "heat"
     def isAway = location.mode?.toLowerCase()?.contains("away") ?: false
     def deviceMode = thermostat.currentValue("thermostatMode")?.toString()?.toLowerCase()
 
-    def target = isHeat
+    def target = varIsHeat
         ? readVar(isAway ? heatPointAwayVar : heatPointVar)
         : readVar(isAway ? coolPointAwayVar : coolPointVar)
 
@@ -123,80 +123,78 @@ def processThermostat(thermostat, String modeVarName) {
         log.warn "HVAC ${thermostat.displayName}: no target (var=${currentMode}, location=${location.mode}, device=${deviceMode})"
         return
     }
-    target = target as BigDecimal
 
     def actual = thermostat.currentValue("thermostatSetpoint")
-    if (actual != null) actual = actual as BigDecimal
-
     def id = thermostat.id
     def overrideKey = "overrideUntil_${id}"
     def lastKey = "lastCommanded_${id}"
     def seenKey = "baselined_${id}"
     def overrideUntil = (state[overrideKey] ?: 0) as long
+    def numericTarget = (target as BigDecimal).intValue()
+
+    // Write the setpoint the thermostat is actually using, so the displayed number moves.
+    def writeHeat = deviceMode == "heat" || deviceMode == "emergency heat"
+    if (!(deviceMode?.contains("cool") || writeHeat)) writeHeat = varIsHeat
 
     if (state.forceApply) {
-        writeSetpoint(thermostat, isHeat, target, actual, currentMode, deviceMode, "forced")
+        writeSetpoint(thermostat, writeHeat, numericTarget, actual, currentMode, deviceMode, "forced")
         state[seenKey] = true
         state[overrideKey] = 0L
-        state[lastKey] = target
+        state[lastKey] = numericTarget
         return
     }
 
     if (now() < overrideUntil) {
-        log.info "HVAC ${thermostat.displayName}: hold until ${new Date(overrideUntil)} (actual=${actual}, target=${target})"
+        log.info "HVAC ${thermostat.displayName}: hold until ${new Date(overrideUntil)} (actual=${actual}, target=${numericTarget})"
         return
     }
 
     if (!state[seenKey]) {
         state[seenKey] = true
-        state[lastKey] = actual
-        if (actual != null && !sameTemp(actual, target)) {
-            startHold(thermostat, overrideKey, lastKey, actual, target)
+        state[lastKey] = actual == null ? null : (actual as BigDecimal).intValue()
+        if (actual != null && !sameTemp(actual, numericTarget)) {
+            startHold(thermostat, overrideKey, lastKey, actual, numericTarget)
         }
         return
     }
 
     def lastCommanded = state[lastKey]
     if (lastCommanded != null && actual != null
-            && !sameTemp(actual, lastCommanded as BigDecimal)
-            && !sameTemp(actual, target)) {
-        startHold(thermostat, overrideKey, lastKey, actual, target)
+            && !sameTemp(actual, lastCommanded)
+            && !sameTemp(actual, numericTarget)) {
+        startHold(thermostat, overrideKey, lastKey, actual, numericTarget)
         return
     }
 
-    if (actual == null || !sameTemp(actual, target)) {
-        writeSetpoint(thermostat, isHeat, target, actual, currentMode, deviceMode, "scheduled")
-        state[lastKey] = target
+    if (actual == null || !sameTemp(actual, numericTarget)) {
+        writeSetpoint(thermostat, writeHeat, numericTarget, actual, currentMode, deviceMode, "scheduled")
+        state[lastKey] = numericTarget
     }
 }
 
-private void writeSetpoint(thermostat, boolean isHeat, target, actual, currentMode, deviceMode, why) {
-    def cmd = (target == target.intValue()) ? target.intValue() : target
+def writeSetpoint(thermostat, boolean isHeat, int cmd, actual, currentMode, deviceMode, why) {
     try {
         if (isHeat) thermostat.setHeatingSetpoint(cmd)
         else thermostat.setCoolingSetpoint(cmd)
         log.info "HVAC ${thermostat.displayName}: ${why} set ${isHeat ? 'heating' : 'cooling'} to ${cmd} (actual=${actual}, var=${currentMode}, device=${deviceMode}, location=${location.mode})"
-        if (deviceMode && ((isHeat && deviceMode != "heat") || (!isHeat && !deviceMode.contains("cool")))) {
-            log.warn "HVAC ${thermostat.displayName}: wrote ${isHeat ? 'heating' : 'cooling'} but the thermostat mode is ${deviceMode}, so the displayed setpoint may not change"
-        }
     } catch (e) {
         log.error "HVAC failed to set ${thermostat.displayName}: ${e.message}"
     }
 }
 
-private void startHold(thermostat, String overrideKey, String lastKey, actual, target) {
+def startHold(thermostat, String overrideKey, String lastKey, actual, target) {
     def hours = (overrideHours ?: 4) as int
     state[overrideKey] = now() + (hours * 60L * 60L * 1000L)
     state[lastKey] = null
     log.info "HVAC ${thermostat.displayName}: hold ${actual} (target ${target}) until ${new Date(state[overrideKey])}"
 }
 
-private boolean sameTemp(a, b) {
+def sameTemp(a, b) {
     if (a == null || b == null) return false
-    return ((a as BigDecimal) - (b as BigDecimal)).abs() < 0.2
+    return (((a as BigDecimal) - (b as BigDecimal)).abs() < 0.2)
 }
 
-private def readVar(String varName) {
+def readVar(String varName) {
     if (!varName) return null
     try {
         return getGlobalVar(varName)?.value
