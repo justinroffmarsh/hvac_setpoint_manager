@@ -69,21 +69,27 @@ def initialize() {
 }
 
 def thermostatModeHandler(evt) {
-    def key = "overrideUntil_${evt.device.id}"
-    state[key] = 0L
-    state.remove("lastCommanded_${evt.device.id}")
+    clearHold(evt.device)
     if (logEnable) log.debug "Thermostat mode changed on ${evt.device.displayName}; override cleared"
     runIn(2, "checkAndSetSetpoints")
 }
 
 def locationModeHandler(evt) {
-    if (logEnable) log.debug "Location mode is ${evt.value}"
+    if (logEnable) log.debug "Location mode is ${evt.value}; clearing holds"
+    if (downstairsThermostat) clearHold(downstairsThermostat)
+    if (upstairsThermostat) clearHold(upstairsThermostat)
     checkAndSetSetpoints()
 }
 
 def checkAndSetSetpoints() {
     if (downstairsThermostat) processThermostat(downstairsThermostat, downstairsModeVar)
     if (upstairsThermostat && upstairsModeVar) processThermostat(upstairsThermostat, upstairsModeVar)
+}
+
+private void clearHold(device) {
+    if (!device) return
+    state["overrideUntil_${device.id}"] = 0L
+    state.remove("lastCommanded_${device.id}")
 }
 
 def processThermostat(thermostat, String modeVarName) {
