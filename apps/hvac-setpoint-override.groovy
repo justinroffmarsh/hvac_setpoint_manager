@@ -31,6 +31,7 @@ preferences {
                 options: ["5", "10", "12", "15", "30"], defaultValue: "12", required: true
             input "overrideHours", "number", title: "Manual override (hours)", defaultValue: 4, required: true, range: "1..24"
             input "logEnable", "bool", title: "Enable debug logging", defaultValue: true
+            input "applyNow", "button", title: "Apply setpoints now"
         }
     }
 }
@@ -68,6 +69,10 @@ def initialize() {
     runIn(5, "checkAndSetSetpoints")
 }
 
+def appButtonHandler(btn) {
+    if (btn == "applyNow") forceApply("button")
+}
+
 def thermostatModeHandler(evt) {
     clearHold(evt.device)
     if (logEnable) log.debug "Thermostat mode changed on ${evt.device.displayName}; override cleared"
@@ -75,21 +80,30 @@ def thermostatModeHandler(evt) {
 }
 
 def locationModeHandler(evt) {
-    if (logEnable) log.debug "Location mode is ${evt.value}; clearing holds"
+    forceApply("location ${evt.value}")
+}
+
+def forceApply(reason) {
+    log.info "HVAC force-apply (${reason})"
+    state.forceApply = true
     if (downstairsThermostat) clearHold(downstairsThermostat)
     if (upstairsThermostat) clearHold(upstairsThermostat)
     checkAndSetSetpoints()
 }
 
 def checkAndSetSetpoints() {
-    if (downstairsThermostat) processThermostat(downstairsThermostat, downstairsModeVar)
-    if (upstairsThermostat && upstairsModeVar) processThermostat(upstairsThermostat, upstairsModeVar)
+    try {
+        if (downstairsThermostat) processThermostat(downstairsThermostat, downstairsModeVar)
+        if (upstairsThermostat && upstairsModeVar) processThermostat(upstairsThermostat, upstairsModeVar)
+    } finally {
+        state.forceApply = false
+    }
 }
 
 private void clearHold(device) {
     if (!device) return
     state["overrideUntil_${device.id}"] = 0L
-    state.remove("lastCommanded_${device.id}")
+    state["lastCommanded_${device.id}"] = null
 }
 
 def processThermostat(thermostat, String modeVarName) {
@@ -99,13 +113,14 @@ def processThermostat(thermostat, String modeVarName) {
     def currentMode = modeRaw?.toString()?.trim()?.toLowerCase()
     def isHeat = currentMode == "heat"
     def isAway = location.mode?.toLowerCase()?.contains("away") ?: false
+    def deviceMode = thermostat.currentValue("thermostatMode")?.toString()?.toLowerCase()
 
     def target = isHeat
         ? readVar(isAway ? heatPointAwayVar : heatPointVar)
         : readVar(isAway ? coolPointAwayVar : coolPointVar)
 
     if (target == null) {
-        log.warn "No target setpoint for ${thermostat.displayName} (mode=${currentMode}, away=${isAway})"
+        log.warn "HVAC ${thermostat.displayName}: no target (var=${currentMode}, location=${location.mode}, device=${deviceMode})"
         return
     }
     target = target as BigDecimal
@@ -119,13 +134,19 @@ def processThermostat(thermostat, String modeVarName) {
     def seenKey = "baselined_${id}"
     def overrideUntil = (state[overrideKey] ?: 0) as long
 
-    if (now() < overrideUntil) {
-        if (logEnable) log.debug "${thermostat.displayName}: hold until ${new Date(overrideUntil)}"
+    if (state.forceApply) {
+        writeSetpoint(thermostat, isHeat, target, actual, currentMode, deviceMode, "forced")
+        state[seenKey] = true
+        state[overrideKey] = 0L
+        state[lastKey] = target
         return
     }
 
-    // First sighting: if the thermostat is already off the calculated setpoint,
-    // treat that as an existing manual hold rather than overwriting it.
+    if (now() < overrideUntil) {
+        log.info "HVAC ${thermostat.displayName}: hold until ${new Date(overrideUntil)} (actual=${actual}, target=${target})"
+        return
+    }
+
     if (!state[seenKey]) {
         state[seenKey] = true
         state[lastKey] = actual
@@ -144,14 +165,22 @@ def processThermostat(thermostat, String modeVarName) {
     }
 
     if (actual == null || !sameTemp(actual, target)) {
-        try {
-            if (isHeat) thermostat.setHeatingSetpoint(target)
-            else thermostat.setCoolingSetpoint(target)
-            state[lastKey] = target
-            if (logEnable) log.debug "${thermostat.displayName}: set ${isHeat ? 'heating' : 'cooling'} to ${target}"
-        } catch (e) {
-            log.error "Failed to set ${thermostat.displayName}: ${e.message}"
+        writeSetpoint(thermostat, isHeat, target, actual, currentMode, deviceMode, "scheduled")
+        state[lastKey] = target
+    }
+}
+
+private void writeSetpoint(thermostat, boolean isHeat, target, actual, currentMode, deviceMode, why) {
+    def cmd = (target == target.intValue()) ? target.intValue() : target
+    try {
+        if (isHeat) thermostat.setHeatingSetpoint(cmd)
+        else thermostat.setCoolingSetpoint(cmd)
+        log.info "HVAC ${thermostat.displayName}: ${why} set ${isHeat ? 'heating' : 'cooling'} to ${cmd} (actual=${actual}, var=${currentMode}, device=${deviceMode}, location=${location.mode})"
+        if (deviceMode && ((isHeat && deviceMode != "heat") || (!isHeat && !deviceMode.contains("cool")))) {
+            log.warn "HVAC ${thermostat.displayName}: wrote ${isHeat ? 'heating' : 'cooling'} but the thermostat mode is ${deviceMode}, so the displayed setpoint may not change"
         }
+    } catch (e) {
+        log.error "HVAC failed to set ${thermostat.displayName}: ${e.message}"
     }
 }
 
@@ -159,9 +188,7 @@ private void startHold(thermostat, String overrideKey, String lastKey, actual, t
     def hours = (overrideHours ?: 4) as int
     state[overrideKey] = now() + (hours * 60L * 60L * 1000L)
     state[lastKey] = null
-    if (logEnable) {
-        log.debug "${thermostat.displayName}: hold ${actual} (target ${target}) until ${new Date(state[overrideKey])}"
-    }
+    log.info "HVAC ${thermostat.displayName}: hold ${actual} (target ${target}) until ${new Date(state[overrideKey])}"
 }
 
 private boolean sameTemp(a, b) {
