@@ -2,16 +2,16 @@
   "packageName": "HVAC Setpoint Override",
   "minimumHEVersion": "2.3.0",
   "author": "Justin Roff-Marsh",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "dateReleased": "2026-10-21",
   "licenseFile": "LICENSE",
-  "releaseNotes": "Initial release: mode-based setpoints with 4-hour manual override for one or two thermostats.",
+  "releaseNotes": "Mode-based setpoints with a manual hold. A thermostat mode change ends the hold. The hold is not extended on later checks.",
   "apps": [
     {
       "id": "hvac-setpoint-override",
       "name": "HVAC Setpoint Override",
       "namespace": "roffmarsh",
-      "location": "https://raw.githubusercontent.com/yourusername/hvac-setpoint-override/main/apps/hvac-setpoint-override.groovy",
+      "location": "https://raw.githubusercontent.com/justinroffmarsh/hvac_setpoint_manager/main/apps/hvac-setpoint-override.groovy",
       "required": true,
       "oauth": false
     }
