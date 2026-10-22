@@ -14,16 +14,24 @@ preferences {
         section("Thermostats") {
             input "downstairsThermostat", "capability.thermostat", title: "Downstairs thermostat", required: true, multiple: false
             input "upstairsThermostat", "capability.thermostat", title: "Upstairs thermostat", required: false, multiple: false
+            paragraph "Heat or cool is read from each thermostat. If a thermostat is off, it is left alone unless you choose a fallback below."
         }
 
-        section("Hub variable names") {
-            input "downstairsModeVar", "text", title: "Downstairs HVAC mode", defaultValue: "DownstairsHVACMode", required: true
-            input "upstairsModeVar", "text", title: "Upstairs HVAC mode", defaultValue: "UpstairsHVACMode", required: false
-            paragraph "Setpoint variables are shared by both thermostats. Mode values should be Heat or Cool."
-            input "heatPointVar", "text", title: "Heat point (home)", defaultValue: "HeatPoint", required: true
-            input "heatPointAwayVar", "text", title: "Heat point (away)", defaultValue: "HeatPointCat", required: true
-            input "coolPointVar", "text", title: "Cool point (home)", defaultValue: "CoolPoint", required: true
-            input "coolPointAwayVar", "text", title: "Cool point (away)", defaultValue: "CoolPointCat", required: true
+        section("Setpoints") {
+            input "heatPoint", "decimal", title: "Heat point (home)", required: true
+            input "heatPointAway", "decimal", title: "Heat point (away)", required: true
+            input "coolPoint", "decimal", title: "Cool point (home)", required: true
+            input "coolPointAway", "decimal", title: "Cool point (away)", required: true
+            paragraph "Away setpoints are used when the location mode name contains \"away\"."
+        }
+
+        section("If the thermostat is off") {
+            input "downstairsOffMode", "enum", title: "Downstairs",
+                options: ["do nothing": "Do nothing", "heat": "Treat as heat", "cool": "Treat as cool"],
+                defaultValue: "do nothing", required: true
+            input "upstairsOffMode", "enum", title: "Upstairs",
+                options: ["do nothing": "Do nothing", "heat": "Treat as heat", "cool": "Treat as cool"],
+                defaultValue: "do nothing", required: true
         }
 
         section("Behavior") {
@@ -50,15 +58,6 @@ def updated() {
 
 def initialize() {
     if (logEnable) log.debug "Initializing. Interval ${checkInterval} min, override ${overrideHours} h"
-
-    def names = [downstairsModeVar, upstairsModeVar, heatPointVar, heatPointAwayVar, coolPointVar, coolPointAwayVar].findAll { it }
-    if (names) {
-        try {
-            addInUseGlobalVar(names)
-        } catch (e) {
-            log.warn "Could not mark hub variables in use: ${e.message}"
-        }
-    }
 
     if (downstairsThermostat) subscribe(downstairsThermostat, "thermostatMode", thermostatModeHandler)
     if (upstairsThermostat) subscribe(upstairsThermostat, "thermostatMode", thermostatModeHandler)
@@ -93,8 +92,8 @@ def forceApply(reason) {
 
 def checkAndSetSetpoints() {
     try {
-        if (downstairsThermostat) processThermostat(downstairsThermostat, downstairsModeVar)
-        if (upstairsThermostat && upstairsModeVar) processThermostat(upstairsThermostat, upstairsModeVar)
+        if (downstairsThermostat) processThermostat(downstairsThermostat, downstairsOffMode)
+        if (upstairsThermostat) processThermostat(upstairsThermostat, upstairsOffMode)
     } finally {
         state.forceApply = false
     }
@@ -106,23 +105,27 @@ def clearHold(device) {
     state["lastCommanded_${device.id}"] = null
 }
 
-def processThermostat(thermostat, String modeVarName) {
-    if (!thermostat || !modeVarName) return
+def processThermostat(thermostat, String offMode) {
+    if (!thermostat) return
 
-    def modeRaw = readVar(modeVarName)
-    def currentMode = modeRaw?.toString()?.trim()?.toLowerCase()
-    def varIsHeat = currentMode == "heat"
-    def isAway = location.mode?.toLowerCase()?.contains("away") ?: false
     def deviceMode = thermostat.currentValue("thermostatMode")?.toString()?.toLowerCase()
-
-    def target = varIsHeat
-        ? readVar(isAway ? heatPointAwayVar : heatPointVar)
-        : readVar(isAway ? coolPointAwayVar : coolPointVar)
-
-    if (target == null) {
-        log.warn "HVAC ${thermostat.displayName}: no target (var=${currentMode}, location=${location.mode}, device=${deviceMode})"
+    def isHeat = null
+    if (deviceMode == "heat" || deviceMode == "emergency heat") isHeat = true
+    else if (deviceMode?.contains("cool")) isHeat = false
+    else if (offMode == "heat") isHeat = true
+    else if (offMode == "cool") isHeat = false
+    else {
+        log.info "HVAC ${thermostat.displayName}: mode is ${deviceMode ?: 'unknown'}; not changing setpoint"
         return
     }
+
+    def isAway = location.mode?.toLowerCase()?.contains("away") ?: false
+    def target = isHeat ? (isAway ? heatPointAway : heatPoint) : (isAway ? coolPointAway : coolPoint)
+    if (target == null) {
+        log.warn "HVAC ${thermostat.displayName}: enter the setpoints in the app and click Done"
+        return
+    }
+    def numericTarget = (target as BigDecimal).intValue()
 
     def actual = thermostat.currentValue("thermostatSetpoint")
     def id = thermostat.id
@@ -130,14 +133,9 @@ def processThermostat(thermostat, String modeVarName) {
     def lastKey = "lastCommanded_${id}"
     def seenKey = "baselined_${id}"
     def overrideUntil = (state[overrideKey] ?: 0) as long
-    def numericTarget = (target as BigDecimal).intValue()
-
-    // Write the setpoint the thermostat is actually using, so the displayed number moves.
-    def writeHeat = deviceMode == "heat" || deviceMode == "emergency heat"
-    if (!(deviceMode?.contains("cool") || writeHeat)) writeHeat = varIsHeat
 
     if (state.forceApply) {
-        writeSetpoint(thermostat, writeHeat, numericTarget, actual, currentMode, deviceMode, "forced")
+        writeSetpoint(thermostat, isHeat, numericTarget, actual, deviceMode, "forced")
         state[seenKey] = true
         state[overrideKey] = 0L
         state[lastKey] = numericTarget
@@ -167,16 +165,16 @@ def processThermostat(thermostat, String modeVarName) {
     }
 
     if (actual == null || !sameTemp(actual, numericTarget)) {
-        writeSetpoint(thermostat, writeHeat, numericTarget, actual, currentMode, deviceMode, "scheduled")
+        writeSetpoint(thermostat, isHeat, numericTarget, actual, deviceMode, "scheduled")
         state[lastKey] = numericTarget
     }
 }
 
-def writeSetpoint(thermostat, boolean isHeat, int cmd, actual, currentMode, deviceMode, why) {
+def writeSetpoint(thermostat, boolean isHeat, int cmd, actual, deviceMode, why) {
     try {
         if (isHeat) thermostat.setHeatingSetpoint(cmd)
         else thermostat.setCoolingSetpoint(cmd)
-        log.info "HVAC ${thermostat.displayName}: ${why} set ${isHeat ? 'heating' : 'cooling'} to ${cmd} (actual=${actual}, var=${currentMode}, device=${deviceMode}, location=${location.mode})"
+        log.info "HVAC ${thermostat.displayName}: ${why} set ${isHeat ? 'heating' : 'cooling'} to ${cmd} (actual=${actual}, device=${deviceMode}, location=${location.mode})"
     } catch (e) {
         log.error "HVAC failed to set ${thermostat.displayName}: ${e.message}"
     }
@@ -192,14 +190,4 @@ def startHold(thermostat, String overrideKey, String lastKey, actual, target) {
 def sameTemp(a, b) {
     if (a == null || b == null) return false
     return (((a as BigDecimal) - (b as BigDecimal)).abs() < 0.2)
-}
-
-def readVar(String varName) {
-    if (!varName) return null
-    try {
-        return getGlobalVar(varName)?.value
-    } catch (e) {
-        log.warn "Could not read hub variable '${varName}': ${e.message}"
-        return null
-    }
 }
